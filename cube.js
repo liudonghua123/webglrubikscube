@@ -1,11 +1,11 @@
 /**
  * @author Andrii Pashentsev (https://github.com/andyps)
  * 
- * Simple Rubik's Cube game done during js13kGames competition
+ * Simple Rubik's Cube game done during js13kGames competition. Some code were cut to fit into filesize limits.
+ * Tested in Firefox, Chrome, Edge, IE 11
  * 
  * Use mouse right/middle mouse buttons to rotate camera.
  * You can also use left mouse button to rotate camera but outside the cube.
- * And you can use keyboard arrow keys to rotate camera as well.
  *
  * To zoom camera use mouse wheel.
  *
@@ -14,11 +14,11 @@
  */
 
 (function(){
-var GlitchCube = window.GlitchCube = function(canvasId) {
+var GlitchCube = function(canvasId) {
     return this.init(canvasId); 
 };
 // some usefull functions and values
-var U = GlitchCube.Utils = {
+var U = {
     EPS: 0.001,
     PI_HALF: Math.PI / 2,
     PI_180: Math.PI / 180,
@@ -27,6 +27,12 @@ var U = GlitchCube.Utils = {
         return Math.round(255 * fColor);
     }
 };
+// just to save some space
+var o_t2d = 'TEXTURE_2D';
+var o_ab = 'ARRAY_BUFFER';
+var o_sd = 'STATIC_DRAW';
+var o_eab = 'ELEMENT_ARRAY_BUFFER';
+
 /**
  * Matrix
  * @class
@@ -645,9 +651,8 @@ var Mesh = (function () {
      * @param {array} indices Distance to near plane
      * @param {array} normals Distance to far plane
      * @param {Material} material
-     * @param {number} drawMode One of gl constants
      */
-    function Mesh(name, vertices, indices, normals, material, drawMode) {
+    function Mesh(name, vertices, indices, normals, material) {
         this.isReady = false;
         
         this.name = name;
@@ -658,7 +663,6 @@ var Mesh = (function () {
         
         this.normals = new Float32Array(normals);
         
-        this.drawMode = drawMode;
         this.textureCoords = new Float32Array([]);
         this.material = material;
 
@@ -775,27 +779,19 @@ var Material = (function () {
     function Material(name, color, textureSrc, gl) {
         this.name = name;
         this.color = color;
-        if (!this.color) {
-            this.color = new Vector(1, 1, 1);
-        }
+
         this.textureSrc = textureSrc;
         this.textureImg = null;
-        this.textureReady = false;
-        this.texture = null;
+
         this.cbo = null;
         this.colors = null;
-        this.textureData = null;
         this.gl = gl;
-        this.crossOrigin = null;
         
         this.initTexture();
     }
     Material.prototype = {
         setColors: function(colors) {
             this.colors = new Float32Array(colors);
-        },
-        setCrossOrigin: function(crossOrigin) {
-            this.crossOrigin = crossOrigin;
         },
         /**
          * Initialize textures
@@ -811,34 +807,21 @@ var Material = (function () {
             
             this.prepareTexture();
         },
-        loadTexture: function() {
-            if (!this.textureSrc) {
-                return;
-            }
-            this.textureImg = new Image();
-            var $this = this;
-            if (this.crossOrigin) {
-                this.textureImg.crossOrigin = this.crossOrigin;
-            }
-            this.textureImg.onload = this.textureImg.onerror = function(e) {
-                if (e && (e.type !== 'error')) {
-                    $this.textureReady = true;
-                    $this.prepareTexture();
-                }
-            };
-            this.textureImg.src = this.textureSrc;
-        },
         prepareTexture: function() {
             this.gl.activeTexture(this.gl.TEXTURE0);
-            this.gl.bindTexture(this.gl.TEXTURE_2D, this.texture);
-            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
-            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
-            if (this.textureReady) {
-                this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGB, this.gl.RGB, this.gl.UNSIGNED_BYTE, this.textureImg);
+            var t2 = this.gl[o_t2d];
+            this.gl.bindTexture(t2, this.texture);
+            this.gl.texParameteri(t2, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
+            this.gl.texParameteri(t2, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
+
+            if (this.textureSrc) {
+                this.textureImg = new Image();
+                this.textureImg.src = this.textureSrc;
+                this.gl.texImage2D(t2, 0, this.gl.RGB, this.gl.RGB, this.gl.UNSIGNED_BYTE, this.textureImg);
             } else {
-                this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGB, 1, 1, 0, this.gl.RGB, this.gl.UNSIGNED_BYTE, this.textureData);
+                this.gl.texImage2D(t2, 0, this.gl.RGB, 1, 1, 0, this.gl.RGB, this.gl.UNSIGNED_BYTE, this.textureData);
             }
-            this.gl.bindTexture(this.gl.TEXTURE_2D, null);
+            this.gl.bindTexture(t2, null);
         }
     };
     return Material;
@@ -854,22 +837,22 @@ GlitchCube.prototype = {
         'uniform mat4 uVMatrix;',
         'uniform mat4 uMMatrix;',
         'uniform mat4 uNMatrix;',
-        'uniform vec3 uLightPosition;',
+        'uniform vec3 uLP;',
         'varying vec4 vColor;',
         'varying vec2 vTextureCoord;',
-        'attribute vec2 aVertexTextureCoords;',
+        'attribute vec2 aTexCoords;',
         'void main(void) {',
-            'vec4 vertex = uMMatrix * vec4(aPosition, 1.0);',
-            'vec3 normal = vec3(uNMatrix * vec4(aNormal, 1.0));',
-            'vec4 lightPos = vec4(uLightPosition, 1.0);',
-            'vec3 lightRay = vertex.xyz - lightPos.xyz;',
-            'float lambertTerm = max(dot(normalize(normal), -normalize(lightRay)), 0.0);',
-            'vec3 diffuse = vec3(1.0, 1.0, 1.0) * aColor.rgb * lambertTerm;',
-            'vec3 ambient = vec3(0.4, 0.4, 0.4) * aColor.rgb;',
-            'vColor = vec4(ambient + diffuse, aColor.a);',
-            'vTextureCoord = aVertexTextureCoords;',
+            'vec4 v = uMMatrix * vec4(aPosition, 1.0);',
+            'vec3 n = vec3(uNMatrix * vec4(aNormal, 1.0));',
+            'vec4 lP = vec4(uLP, 1.0);',
+            'vec3 lR = v.xyz - lP.xyz;',
+            'float lT = max(dot(normalize(n), -normalize(lR)), 0.0);',
+            'vec3 d = vec3(1.0, 1.0, 1.0) * aColor.rgb * lT;',
+            'vec3 a = vec3(0.4, 0.4, 0.4) * aColor.rgb;',
+            'vColor = vec4(a + d, aColor.a);',
+            'vTextureCoord = aTexCoords;',
             
-            'gl_Position = uPMatrix * uVMatrix * vertex;',
+            'gl_Position = uPMatrix * uVMatrix * v;',
        '}'
     ],
     // fragment shader
@@ -881,18 +864,11 @@ GlitchCube.prototype = {
         'uniform sampler2D uSampler;',
         'varying vec2 vTextureCoord;',
         'void main(void) {',
-            'vec4 texColor = texture2D(uSampler, vTextureCoord);',
-            'gl_FragColor = vColor * texColor;',
+            'gl_FragColor = vColor * texture2D(uSampler, vTextureCoord);',
         '}'
     ],
     meshes: [],
     cubes: [],
-    camera: null,
-    gl: null,
-    prg: null,
-    light: null,
-    crossOrigin: null, // anonymous
-    nMatrix: null,
     width: 800,
     height: 600,
     maxHeight: 8640,
@@ -901,8 +877,6 @@ GlitchCube.prototype = {
     minWidth: 100,
     
     sceneSize: 260,
-    halfSceneSize: null,
-    canvas: null,
     animationRatio: 1,
     deltaTime: 0,
     
@@ -912,15 +886,7 @@ GlitchCube.prototype = {
     animating: false,
     rotAngle: 0,
     rotSpeed: 2,
-    antialias: true,
-    showFps: true,
-    fps: 60,
     frameTimestamps: [],
-    // DOM elements
-    fpsContainer: null,
-    hudContainer: null,
-    menuContainer: null,
-    movesContainer: null,
     // side mesh prototype
     sideMeshProto: null,
     
@@ -963,17 +929,22 @@ GlitchCube.prototype = {
     Z0: 20,
     Z1: 0,
     Z2: -20,
-    rotRadius1: null,
     rotRadius2: 20,
     subCubeSize: 19.6,
     subCubeSizeHalf: 9.8,
     sides: {
-        F: {rotation: null, position: null, material: null, color: new Vector(1, 0, 0), texture: 'r.png'}, // far plane
-        N: {rotation: null, position: null, material: null, color: new Vector(1, 0.4, 0.1), texture: 'o.png'}, // near
-        R: {rotation: null, position: null, material: null, color: new Vector(0, 0, 1), texture: 'b.png'}, // right
-        L: {rotation: null, position: null, material: null, color: new Vector(0, 1, 0), texture: 'g.png'}, // left
-        T: {rotation: null, position: null, material: null, color: new Vector(1, 1, 0), texture: 'y.png'}, // top
-        B: {rotation: null, position: null, material: null, color: new Vector(0.8, 0.8, 0.8), texture: 'w.png'} // bottom
+        // far plane
+        F: {rotation: null, position: null, material: null, color: new Vector(1, 0, 0), texture: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgBAMAAACBVGfHAAAAMFBMVEW1RU+zQUuyPUewOUSvNUCtMj2sLjmlHSmqKjW2SFKpJjKnIy6gEh6jFyOnIi60Q05U7/FtAAAAiElEQVQoz2OYiQYY5jOggQmCKECAYYKQEjIACRgjASOQgIkLAkAEQuEgBCIQlgYDMIEOKGiDCXStggCEwG4g2Ld7F0LgeTkIYBWQhwhsr7179y5EBUzgzJmzeAWeky6AaQvIGZgCr5D88nr3u92vX2HzrTxqeGCGGEaYYoY6Zrxgxhxm3KJFPgDNgLNYLci3PAAAAABJRU5ErkJggg=='},
+        // near
+        N: {rotation: null, position: null, material: null, color: new Vector(1, 0.4, 0.1), texture: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgBAMAAACBVGfHAAAAKlBMVEXSaj7RZzrQZDbPYTLOXi7NWyrMWCbKThrUcEXTbULMVSPLUh/IShTHRA0hDlrBAAAAhklEQVQoz2PoQAMMnTNRAUMnAxroZBREBgJAASVkABJQNkYAI7CACwJABFxDYSAEKpAGAzCBrFUQsAwusBsCEALby0GgGkng+PHy4ygCZ0AAReDu3bsYAseRBWpAKggKHMcQQLcWVcWZ8jPl1RhOx/QchvcxAwgjCDEDGSMaMCMKIyoxIhsAltix7OSYuZgAAAAASUVORK5CYII='},
+        // right
+        R: {rotation: null, position: null, material: null, color: new Vector(0, 0, 1), texture: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAPFBMVEU6XJtCY58yVpc+YJ0nTJE2WZkjSY8rUJMvU5UfRo0bQ4sXQIk2WplGZqE+X50uU5UTPIcqT5MPOYUKNYPbl7CgAAAA50lEQVQ4y4WT4RaCIAxGTSSoaIt6/3ftO2M4XaFXh/txz0Q2p+flGAgUAm4JrBQUTSCE6QCCQFMssVFKQeAZ9TG1CnEeYEIGzFlggBXZXFQoc661plRxAckQrAL2AGH5QQTqQlqujiWx7UGE244rKkCgrXDfACFlrUCr8FgxQStwE15KE/iP8Ba8IOegwgeY4Pbghew+c1xh9Ar0wiqcbZK1gmJ70F6I4A+qdgEVRkddrBfVNcsEq+CAsO+mx38mqLj6yCH23cyswypLbmFDezr2MdrfEiWQgT7VY0RY/1WyhEhSAOGYL9WZGqRFMI5RAAAAAElFTkSuQmCC'},
+        // left
+        L: {rotation: null, position: null, material: null, color: new Vector(0, 1, 0), texture: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgBAMAAACBVGfHAAAAMFBMVEU7hYg3g4YzgIQ/iIsvfoEre38neXwjdnpCio0fdHgbcXUXb3MTbXAPam4LaGwHZWkbt3HCAAAAgUlEQVQoz2PoQAMMzcaogKGZAQ00MwoiAwGggBIyAAmouCCAE1ggFAEgAmFpMJAKFSiHAZhA5UwImA4XWAUBCIHVu0FgF5LAGRBAFjh79+7dOygC7969QxV4//8fqQIIMzBtwXQHwqWYfsHwLWZ4YIQYZphihDpmvGDEHEbcYsQ+AN/tuGg9zG1XAAAAAElFTkSuQmCC'},
+        // top
+        T: {rotation: null, position: null, material: null, color: new Vector(1, 1, 0), texture: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgBAMAAACBVGfHAAAAKlBMVEW6qTi+r0W9rUG8rD3AsEm4pzK3pS7Bskyxnh61oyu0oiezoCOvmxitmRTNMUURAAAAfElEQVQoz2MoRwMMJS6ogKFEEBUwlAgpIQNFoIAxMgAJGDAwMDNAATNUgAFVgDUUBgKgAmkwABPInAkB0+ACqyAAIbB6NwjsQhLoAAH8AmfOnEER6Dl79w6qCsICCDMIW4vpUky/YPoWMzwQIYYRppgCmPGCEXMYcYsR+wCNi5kRMtR5DgAAAABJRU5ErkJggg=='},
+        // bottom
+        B: {rotation: null, position: null, material: null, color: new Vector(0.8, 0.8, 0.8), texture: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgBAMAAACBVGfHAAAAGFBMVEXJyMzHxsrFxMjMy8/Lys7DwsbAv8S+vcJPPtDnAAAAoUlEQVQoz22RgQnEIAxFPegAbUcoOIEOcKATFHQD0w3q+pcEE/T0Fa08vhKjcX8Yzz+aowssorLhCMabgYjis+MCB0OJo0PFKSLid1wKJ0hYFZFFamhiFiUDQBFxXikD0SXghVoHUWt9J1FGMW1ZnnFrpfDUhxJN2ARTHQBZRFzcxYq4WQwN2vlyU8cQ6eu668reHqqH6hC+G83BOCQ4xf8AvahbwP3i5kwAAAAASUVORK5CYII='}
     },
     backSide: {rotation: null, position: null, material: null, color: new Vector(0.5, 0.5, 0.5), texture: null},
     rules: { // rotation rules
@@ -1019,7 +990,7 @@ GlitchCube.prototype = {
         this.canvas = document.getElementById(canvasId);
         
         if (!this.isSupported()) {
-            this.showError('Unfortunately your browser is not supported');
+            alert('Browser not supported');
             return this;
         }
         this.initContext();
@@ -1040,12 +1011,6 @@ GlitchCube.prototype = {
         this.light.position = this.camera.position;
         
         this.initSounds();
-        //show fps
-        if (this.showFps) {
-            this.fpsContainer = document.createElement('div');
-            this.fpsContainer.title = this.fpsContainer.id = 'stats';
-            document.body.appendChild(this.fpsContainer);
-        }
         
         this.initSides();
         this.createCube();
@@ -1070,55 +1035,55 @@ GlitchCube.prototype = {
         return this;
     },
     initCamera: function() {
-        var fovY = 0.8; // ~45.84deg
-        var aspect = this.width / this.height;
-        
-        var cameraPosition = new Vector(
-            this.cameraInitialPosition[0], 
-            this.cameraInitialPosition[1], 
-            -this.cameraInitialPosition[2]
+        // fov is in radians! 0.8 = ~45.84deg
+        this.camera = new Camera(
+            0.8,
+            this.width / this.height,
+            1, 260,
+            new Vector(
+                this.cameraInitialPosition[0], 
+                this.cameraInitialPosition[1], 
+                -this.cameraInitialPosition[2]
+            )
         );
-        // fov is in radians!
-        this.camera = new Camera(fovY, aspect, 1, 260, cameraPosition);
     },
     initMeshBuffers: function(mesh) {
+        var oAb = this.gl[o_ab];
+        var oSd = this.gl[o_sd];
         try {
             mesh.vbo = this.createBuffer('vbo', mesh.name);
             mesh.nbo = this.createBuffer('nbo', mesh.name);
             if (!mesh.material.cbo) {
                 mesh.material.cbo = this.createBuffer('cbo', mesh.name);
-                this.gl.bindBuffer(this.gl.ARRAY_BUFFER, mesh.material.cbo);
-                this.gl.bufferData(this.gl.ARRAY_BUFFER, mesh.material.colors, this.gl.STATIC_DRAW);
+                this.gl.bindBuffer(oAb, mesh.material.cbo);
+                this.gl.bufferData(oAb, mesh.material.colors, oSd);
             }
         } catch (e) {
-            console.log(e.message);
             return false;
         }
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, mesh.vbo);
-        this.gl.bufferData(this.gl.ARRAY_BUFFER, mesh.vertices, this.gl.STATIC_DRAW);
+        this.gl.bindBuffer(oAb, mesh.vbo);
+        this.gl.bufferData(oAb, mesh.vertices, oSd);
         
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, mesh.nbo);
-        this.gl.bufferData(this.gl.ARRAY_BUFFER, mesh.normals, this.gl.STATIC_DRAW);
+        this.gl.bindBuffer(oAb, mesh.nbo);
+        this.gl.bufferData(oAb, mesh.normals, oSd);
         
         if (mesh.indices.length) {
             try {
                 mesh.ibo = this.createBuffer('ibo', mesh.name);
             } catch (e) {
-                console.log(e.message);
                 return false;
             }
-            this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, mesh.ibo);
-            this.gl.bufferData(this.gl.ELEMENT_ARRAY_BUFFER, mesh.indices, this.gl.STATIC_DRAW);
+            this.gl.bindBuffer(this.gl[o_eab], mesh.ibo);
+            this.gl.bufferData(this.gl[o_eab], mesh.indices, oSd);
         }
         if (mesh.textureCoords.length) {
             try {
                 mesh.tbo = this.createBuffer('tbo', mesh.name);
             } catch (e) {
-                console.log(e.message);
                 return false;
             }
-            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, mesh.tbo);
-            this.gl.bufferData(this.gl.ARRAY_BUFFER, mesh.textureCoords, this.gl.STATIC_DRAW);
+            this.gl.bindBuffer(oAb, mesh.tbo);
+            this.gl.bufferData(oAb, mesh.textureCoords, oSd);
         }
         mesh.isReady = true;
         return true;
@@ -1126,12 +1091,12 @@ GlitchCube.prototype = {
     createBuffer: function(name, meshName) {
         var b = this.gl.createBuffer();
         if (!b) {
-            console.log('Failed to create ' + name + ' for ' + meshName);
             return false;
         }
         return b;
     },
     initSideMeshProtoBuffers: function() {
+        var oSd = this.gl[o_sd];
         var mesh = this.sideMeshProto;
         try {
             mesh.vbo = this.createBuffer('vbo', mesh.name);
@@ -1139,32 +1104,32 @@ GlitchCube.prototype = {
             mesh.ibo = this.createBuffer('ibo', mesh.name);
             mesh.tbo = this.createBuffer('tbo', mesh.name);
         } catch (e) {
-            console.log(e.message);
             return false;
         }
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, mesh.vbo);
-        this.gl.bufferData(this.gl.ARRAY_BUFFER, mesh.vertices, this.gl.STATIC_DRAW);
+        var oAb = this.gl[o_ab];
+        this.gl.bindBuffer(oAb, mesh.vbo);
+        this.gl.bufferData(oAb, mesh.vertices, oSd);
         
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, mesh.nbo);
-        this.gl.bufferData(this.gl.ARRAY_BUFFER, mesh.normals, this.gl.STATIC_DRAW);
+        this.gl.bindBuffer(oAb, mesh.nbo);
+        this.gl.bufferData(oAb, mesh.normals, oSd);
         
-        this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, mesh.ibo);
-        this.gl.bufferData(this.gl.ELEMENT_ARRAY_BUFFER, mesh.indices, this.gl.STATIC_DRAW);
+        this.gl.bindBuffer(this.gl[o_eab], mesh.ibo);
+        this.gl.bufferData(this.gl[o_eab], mesh.indices, oSd);
         
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, mesh.tbo);
-        this.gl.bufferData(this.gl.ARRAY_BUFFER, mesh.textureCoords, this.gl.STATIC_DRAW);
+        this.gl.bindBuffer(oAb, mesh.tbo);
+        this.gl.bufferData(oAb, mesh.textureCoords, oSd);
         mesh.isReady = true;
         return true;
     },
     initSideMeshBuffers: function(mesh) {
+        var oAb = this.gl[o_ab];
         try {
             if (!mesh.material.cbo) {
                 mesh.material.cbo = this.createBuffer('cbo', mesh.name);
-                this.gl.bindBuffer(this.gl.ARRAY_BUFFER, mesh.material.cbo);
-                this.gl.bufferData(this.gl.ARRAY_BUFFER, mesh.material.colors, this.gl.STATIC_DRAW);
+                this.gl.bindBuffer(oAb, mesh.material.cbo);
+                this.gl.bufferData(oAb, mesh.material.colors, this.gl[o_sd]);
             }
         } catch (e) {
-            console.log(e.message);
             return false;
         }
         mesh.isReady = true;
@@ -1180,8 +1145,8 @@ GlitchCube.prototype = {
         }
         
         // unbind buffers
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, null);
-        this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, null);
+        this.gl.bindBuffer(this.gl[o_ab], null);
+        this.gl.bindBuffer(this.gl[o_eab], null);
     },
     calculateNMatrix: function(mesh) {
         mesh.updateWorldMatrix();
@@ -1197,18 +1162,18 @@ GlitchCube.prototype = {
         this.gl.uniformMatrix4fv(this.prg.uMMatrix, false, mesh.worldMatrix.elements);
         this.gl.uniformMatrix4fv(this.prg.uNMatrix, false, this.nMatrix.elements);
         if (prevMaterialName !== mesh.material.name) {
-            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, mesh.material.cbo);
+            this.gl.bindBuffer(this.gl[o_ab], mesh.material.cbo);
             this.gl.vertexAttribPointer(this.prg.aColor, 3, this.gl.FLOAT, false, 0, 0);
-            this.gl.bindTexture(this.gl.TEXTURE_2D, mesh.material.texture);
+            this.gl.bindTexture(this.gl[o_t2d], mesh.material.texture);
         }
-        this.gl.drawElements(mesh.drawMode, mesh.elementsCnt, this.gl.UNSIGNED_BYTE, 0);
+        this.gl.drawElements(this.gl.TRIANGLES, mesh.elementsCnt, this.gl.UNSIGNED_BYTE, 0);
     },
     drawMeshes: function() {
         var $this = this;
         this.gl.uniformMatrix4fv(this.prg.uPMatrix, false, this.camera.pMatrix.elements);
         this.gl.uniformMatrix4fv(this.prg.uVMatrix, false, this.camera.vMatrix.elements);
         
-        this.gl.uniform3fv(this.prg.uLightPosition, this.light.position.toArray());
+        this.gl.uniform3fv(this.prg.uLP, this.light.position.toArray());
         
         this.gl.activeTexture(this.gl.TEXTURE0);
         this.gl.uniform1i(this.prg.uSampler, 0);
@@ -1217,16 +1182,17 @@ GlitchCube.prototype = {
         this.gl.enableVertexAttribArray(this.prg.aNormal);
         this.gl.enableVertexAttribArray(this.prg.aColor);
         
+        var oAb = this.gl[o_ab];
         // bind common buffers
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.sideMeshProto.vbo);
+        this.gl.bindBuffer(oAb, this.sideMeshProto.vbo);
         this.gl.vertexAttribPointer(this.prg.aPosition, 3, this.gl.FLOAT, false, 0, 0);
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.sideMeshProto.nbo);
+        this.gl.bindBuffer(oAb, this.sideMeshProto.nbo);
         this.gl.vertexAttribPointer(this.prg.aNormal, 3, this.gl.FLOAT, false, 0, 0);
-        this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.sideMeshProto.ibo);
+        this.gl.bindBuffer(this.gl[o_eab], this.sideMeshProto.ibo);
         
-        this.gl.enableVertexAttribArray(this.prg.aVertexTextureCoords);
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.sideMeshProto.tbo);
-        this.gl.vertexAttribPointer(this.prg.aVertexTextureCoords, 2, this.gl.FLOAT, false, 0, 0);
+        this.gl.enableVertexAttribArray(this.prg.aTexCoords);
+        this.gl.bindBuffer(oAb, this.sideMeshProto.tbo);
+        this.gl.vertexAttribPointer(this.prg.aTexCoords, 2, this.gl.FLOAT, false, 0, 0);
         
         var prevMaterialName = '';
         this.meshes.forEach(function(mesh) {
@@ -1235,9 +1201,9 @@ GlitchCube.prototype = {
         });
         
         // unbind buffers
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, null);
-        this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, null);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, null);
+        this.gl.bindBuffer(oAb, null);
+        this.gl.bindBuffer(this.gl[o_eab], null);
+        this.gl.bindTexture(this.gl[o_t2d], null);
     },
     render: function() {
         this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
@@ -1245,7 +1211,7 @@ GlitchCube.prototype = {
         this.drawMeshes();
     },
     /**
-     * This is used to count fps and animationRatio.
+     * This is used to count animationRatio.
      * animationRatio is usefull when fps is not constant.
      * 
      * @function
@@ -1261,19 +1227,9 @@ GlitchCube.prototype = {
         }
         var deltaTime = Math.max(1, Math.min(this.deltaTime, 1000));
         this.animationRatio = deltaTime * (60.0 / 1000.0);
-        if (len >= 61) {
-            if (len > 61) {
-                this.frameTimestamps.shift();
-                len = this.frameTimestamps.length;
-            }
-            if (this.showFps) {
-                var dt = 0;
-                var dCnt = len - 1;
-                for (var i = 0; i < dCnt; i++) {
-                    dt += this.frameTimestamps[i + 1] - this.frameTimestamps[i];
-                }
-                this.fps = 1000 * dCnt / dt;
-            }
+        
+        if (len > 61) {
+            this.frameTimestamps.shift();
         }
     },
     renderLoopUpdate: function() {
@@ -1286,9 +1242,6 @@ GlitchCube.prototype = {
     },
     renderLoop: function(t2, t1) {
         this.measureStat(t2);
-        if (this.showFps) {
-            this.fpsContainer.innerHTML = this.fps.toFixed() + ' fps';
-        }
         if (!this.paused) {
             this.renderLoopUpdate();
             this.render();
@@ -1324,7 +1277,6 @@ GlitchCube.prototype = {
         gl.compileShader(shader);
         var compiled = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
         if (!compiled) {
-            console.log(gl.getShaderInfoLog(shader));
             gl.deleteShader(shader);
             return null;
         }
@@ -1350,7 +1302,6 @@ GlitchCube.prototype = {
         // check link status
         var linked = this.gl.getProgramParameter(prg, this.gl.LINK_STATUS);
         if (!linked) {
-            console.log(this.gl.getProgramInfoLog(prg));
             this.gl.deleteProgram(prg);
             this.gl.deleteShader(fgShader);
             this.gl.deleteShader(vxShader);
@@ -1363,16 +1314,15 @@ GlitchCube.prototype = {
             this.prg.aPosition = this.getAttribLocation('aPosition');
             this.prg.aNormal = this.getAttribLocation('aNormal');
             this.prg.aColor = this.getAttribLocation('aColor');
-            this.prg.aVertexTextureCoords = this.getAttribLocation('aVertexTextureCoords');
+            this.prg.aTexCoords = this.getAttribLocation('aTexCoords');
             
             this.prg.uPMatrix = this.getUniformLocation('uPMatrix');
             this.prg.uVMatrix = this.getUniformLocation('uVMatrix');
             this.prg.uMMatrix = this.getUniformLocation('uMMatrix');
             this.prg.uNMatrix = this.getUniformLocation('uNMatrix');
-            this.prg.uLightPosition = this.getUniformLocation('uLightPosition');
+            this.prg.uLP = this.getUniformLocation('uLP');
             this.prg.uSampler = this.getUniformLocation('uSampler');
         } catch (e) {
-            console.log(e.message);
             return false;
         }
         
@@ -1381,14 +1331,14 @@ GlitchCube.prototype = {
     getAttribLocation: function(name) {
         var loc = this.gl.getAttribLocation(this.prg, name);
         if (loc < 0) {
-            throw new Error('Failed to get the storage location of ' + name);
+            throw new Error(name);
         }
         return loc;
     },
     getUniformLocation: function(name) {
         var loc = this.gl.getUniformLocation(this.prg, name);
         if (!loc) {
-            throw new Error('Failed to get the storage location of ' + name);
+            throw new Error(name);
         }
         return loc;
     },
@@ -1437,7 +1387,7 @@ GlitchCube.prototype = {
      */
     initContext: function() {
         if (!this.gl) {
-            var ctxParams = {antialias: this.antialias};
+            var ctxParams = {antialias: true};
             // experimental-webgl - for IE11
             var glContextNames = ['webgl', 'experimental-webgl'];
             var gl = null;
@@ -1488,23 +1438,17 @@ GlitchCube.prototype = {
         this.hudContainer.id = 'hud';
         
         this.movesContainer = document.createElement('span');
-        this.movesContainer.id = 'hud-moves';
-        
-        var movesTextNode = document.createTextNode('Moves: ');
-        this.hudContainer.appendChild(movesTextNode);
         this.hudContainer.appendChild(this.movesContainer);
         
         this.movesContainer.textContent = '0';
         
         document.body.appendChild(this.hudContainer);
     },
-    updateHud: function(updateMoves, updateTime) {
-        if (updateMoves) {
-            this.movesContainer.textContent = this.movesCnt;
-        }
+    updateHud: function() {
+        this.movesContainer.textContent = this.movesCnt;
     },
     initSounds: function() {
-        this.sounds.rotate = new Audio('r.wav');
+        this.sounds.rotate = new Audio('data:audio/wav;base64,UklGRr0AAABXQVZFZm10IBAAAAABAAEAiBUAAIgVAAABAAgAZGF0YZkAAACjoZ5wV1pcXmBiZGZnaX2xrqtqY2VmaGlrbG1ucJW2sqZmaGlrbG1ub3Bxcqm3s5Voamtsbm9wcXJzdLq3s4Rpa2xtbnBwcXJzh7q2s3Jqa21ub3BxcnNzmbm1qWlrbG1ub3BxcnN0q7i1lmprbG1ucHFxcnN1u7e0hGprbG5vcHFyc3OHurazcmpsbW5vcHFyc3SZubSgdHo=');
     },
     /**
      * Play sound by name
@@ -2025,11 +1969,8 @@ GlitchCube.prototype = {
                     break;
             }
             side.material = new Material(sideName, side.color, side.texture, this.gl);
-            side.material.setCrossOrigin(this.crossOrigin);
-            side.material.loadTexture();
         }
         this.backSide.material = new Material('back', this.backSide.color, null, this.gl);
-        this.backSide.material.setCrossOrigin(this.crossOrigin);
     },
     /**
      * Create a side mesh prototype which then used to create real objects
@@ -2058,8 +1999,7 @@ GlitchCube.prototype = {
             vertices,
             indices,
             normals,
-            null,
-            this.gl.TRIANGLES
+            null
         );
         var textureCoords = [
             1.0, 1.0, 
@@ -2140,7 +2080,7 @@ GlitchCube.prototype = {
             side.material.setColors(colors);
         }
         
-        var sideMesh = new Mesh(sideName + id, [], [], [], side.material, this.gl.TRIANGLES);
+        var sideMesh = new Mesh(sideName + id, [], [], [], side.material);
         sideMesh.vertices = this.sideMeshProto.vertices;
         sideMesh.indices = this.sideMeshProto.indices;
         sideMesh.normals = this.sideMeshProto.normals;
@@ -2198,8 +2138,7 @@ GlitchCube.prototype = {
         this.scramble();
         
         this.movesCnt = 0;
-        // this.timeSpent = 0;
-        this.updateHud(true, true);
+        this.updateHud();
         this.setPaused(false);
     },
     scramble: function() {
@@ -2257,7 +2196,6 @@ GlitchCube.prototype = {
         }
         
         // apply scramble
-        var lastMute = this.mute;
         this.mute = true;
         var scramblesLen = this.scrambles.length;
         for (var i = 0; i < scramblesLen; i++) {
@@ -2280,8 +2218,7 @@ GlitchCube.prototype = {
                 this.rotateFrameEnd();
             }
         }
-        
-        this.mute = lastMute;
+        this.mute = false;
     },
     /**
      * Start rotation a frame. Direction is specified
@@ -2306,7 +2243,6 @@ GlitchCube.prototype = {
             }
             this.currentSubCubes.push(subCube);
         }
-        
         if (!this.mute) {
             this.playSound('rotate');
         }
@@ -2371,7 +2307,7 @@ GlitchCube.prototype = {
         
         if (!this.paused) {
             this.movesCnt++;
-            this.updateHud(true, false);
+            this.updateHud();
             if (this.checkComplete()) {
                 this.solved = true;
             }
@@ -2448,9 +2384,6 @@ GlitchCube.prototype = {
             // apply new position and rotation
             subCube.updateMatrices();
         });
-    },
-    showError: function(err) {
-        alert(err);
     },
     run: function() {
         this.gl.clearColor(0.0, 0.0, 0.0, 1.0);
